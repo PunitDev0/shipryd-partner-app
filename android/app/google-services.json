@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "117631141567",
+    "project_id": "shipryd-2026",
+    "storage_bucket": "shipryd-2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:117631141567:android:82b348b38a1af70ab6e80a",
+        "android_client_info": {
+          "package_name": "com.maxryd.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDq_uKSUXxiqXu3FVrMb2bz53gbWFXd7-k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:117631141567:android:de76b2ad7cfc4bffb6e80a",
+        "android_client_info": {
+          "package_name": "com.shipryd.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDq_uKSUXxiqXu3FVrMb2bz53gbWFXd7-k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:117631141567:android:ad87179352f50965b6e80a",
+        "android_client_info": {
+          "package_name": "com.shipryd.partner"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDq_uKSUXxiqXu3FVrMb2bz53gbWFXd7-k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

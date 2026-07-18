@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key>
+	<string>AIzaSyD7ueZD5qTXE2UVcaOF2leUiSRR1MBc_Ik</string>
+	<key>GCM_SENDER_ID</key>
+	<string>117631141567</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.shipryd.partner</string>
+	<key>PROJECT_ID</key>
+	<string>shipryd-2026</string>
+	<key>STORAGE_BUCKET</key>
+	<string>shipryd-2026.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:117631141567:ios:100f7da252b51604b6e80a</string>
+</dict>
+</plist>
