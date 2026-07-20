@@ -49,6 +49,12 @@
 	<string>SHIPRYD Partner uses your camera to scan parcel QR/barcodes and capture proof of delivery photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>SHIPRYD Partner uses your location to match you with nearby orders and share your live position with customers during a trip.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>SHIPRYD Partner uses your location to keep turn-by-turn navigation running while you're on a delivery, even if the app is in the background.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>SHIPRYD Partner needs photo library access to attach proof-of-delivery and document photos.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

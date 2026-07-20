@@ -1,7 +1,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
-import '../services/partner_service.dart';
+import 'package:partner/shared/data/partner_service.dart';
 
 /// Runs in a separate isolate when a push arrives while the app is
 /// backgrounded/killed — Firebase must be re-initialized here even though

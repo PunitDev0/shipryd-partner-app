@@ -4,31 +4,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'core/push_notifications.dart';
-import 'data/app_store.dart';
-import 'theme/app_colors.dart';
-import 'screens/splash_screen.dart';
-import 'screens/login_screen.dart';
-import 'screens/register_screen.dart';
-import 'screens/registration_vehicle_screen.dart';
-import 'screens/registration_partner_type_screen.dart';
-import 'screens/dashboard_screen.dart';
-import 'screens/incoming_parcels_screen.dart';
-import 'screens/scan_parcel_screen.dart';
-import 'screens/parcel_history_screen.dart';
-import 'screens/earnings_screen.dart';
-import 'screens/wallet_screen.dart';
-import 'screens/transactions_screen.dart';
-import 'screens/profile_screen.dart';
-import 'screens/bank_details_screen.dart';
-import 'screens/vehicle_info_screen.dart';
-import 'screens/support_screen.dart';
-import 'screens/notifications_screen.dart';
-import 'screens/settings_screen.dart';
-import 'screens/help_center_screen.dart';
-import 'screens/logout_screen.dart';
-import 'screens/ratings_screen.dart';
-import 'widgets/incoming_order_overlay.dart';
+import 'package:google_navigation_flutter/google_navigation_flutter.dart';
+import 'package:partner/core/push_notifications.dart';
+import 'package:partner/features/notifications/presentation/notifications_screen.dart';
+import 'package:partner/features/onboarding/presentation/login_screen.dart';
+import 'package:partner/features/onboarding/presentation/register_screen.dart';
+import 'package:partner/features/onboarding/presentation/registration_partner_type_screen.dart';
+import 'package:partner/features/onboarding/presentation/registration_vehicle_screen.dart';
+import 'package:partner/features/orders/presentation/dashboard_screen.dart';
+import 'package:partner/features/orders/presentation/incoming_parcels_screen.dart';
+import 'package:partner/features/orders/presentation/parcel_history_screen.dart';
+import 'package:partner/features/parcel/presentation/scan_parcel_screen.dart';
+import 'package:partner/features/profile/presentation/bank_details_screen.dart';
+import 'package:partner/features/profile/presentation/logout_screen.dart';
+import 'package:partner/features/profile/presentation/profile_screen.dart';
+import 'package:partner/features/profile/presentation/settings_screen.dart';
+import 'package:partner/features/profile/presentation/vehicle_info_screen.dart';
+import 'package:partner/features/support/presentation/help_center_screen.dart';
+import 'package:partner/features/support/presentation/support_screen.dart';
+import 'package:partner/features/wallet/presentation/earnings_screen.dart';
+import 'package:partner/features/wallet/presentation/ratings_screen.dart';
+import 'package:partner/features/wallet/presentation/transactions_screen.dart';
+import 'package:partner/features/wallet/presentation/wallet_screen.dart';
+import 'package:partner/shared/state/app_store.dart';
+import 'package:partner/shared/state/order_store.dart';
+import 'package:partner/shared/theme/app_colors.dart';
+import 'package:partner/shared/widgets/incoming_order_overlay.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,7 +41,18 @@ void main() async {
   );
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-  await AppStore.instance.init();
+
+  try {
+    if (!await GoogleMapsNavigator.isInitialized()) {
+      await GoogleMapsNavigator.initializeNavigationSession(
+        taskRemovedBehavior: TaskRemovedBehavior.continueService,
+      ).catchError((_) => null);
+    }
+  } catch (e) {
+    debugPrint('[MAIN] Nav session init error: $e');
+  }
+
+  AppStore.instance.init(); // Run initialization in parallel (non-blocking)
   runApp(const ShiprydPartnerApp());
 }
 
@@ -53,7 +65,7 @@ class ShiprydPartnerApp extends StatelessWidget {
     final baseTextTheme = GoogleFonts.interTextTheme();
 
     return AnimatedBuilder(
-      animation: AppStore.instance,
+      animation: Listenable.merge([AppStore.instance, OrderStore.instance]),
       builder: (context, _) {
         final store = AppStore.instance;
         final dark = store.darkMode;
@@ -81,9 +93,14 @@ class ShiprydPartnerApp extends StatelessWidget {
               iconTheme: IconThemeData(color: AppColors.textPrimary),
             ),
           ),
-          initialRoute: SplashScreen.route,
+          home: !store.initialized
+              ? const InitializingScreen()
+              : !store.isLoggedIn
+                  ? const LoginScreen()
+                  : store.isRegistered
+                      ? const DashboardScreen()
+                      : const RegistrationPartnerTypeScreen(),
           routes: {
-            SplashScreen.route: (_) => const SplashScreen(),
             LoginScreen.route: (_) => const LoginScreen(),
             RegisterScreen.route: (_) => const RegisterScreen(),
             RegistrationVehicleScreen.route: (_) => const RegistrationVehicleScreen(),
@@ -109,16 +126,56 @@ class ShiprydPartnerApp extends StatelessWidget {
             return Stack(
               children: [
                 if (child != null) child,
-                if (store.activeRequest != null)
+                if (OrderStore.instance.activeOffer != null)
                   IncomingOrderOverlay(
-                    key: ValueKey(store.activeRequest!.id),
-                    parcel: store.activeRequest!,
+                    key: ValueKey(OrderStore.instance.activeOffer!.id),
+                    order: OrderStore.instance.activeOffer!,
                   ),
               ],
             );
           },
         );
       },
+    );
+  }
+}
+
+class InitializingScreen extends StatelessWidget {
+  const InitializingScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              height: 80,
+              width: 80,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.local_shipping_rounded,
+                color: AppColors.primary,
+                size: 40,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

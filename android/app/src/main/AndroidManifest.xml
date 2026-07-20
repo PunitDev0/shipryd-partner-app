@@ -37,6 +37,16 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyDEDoT1AQ6WHDZurqMT0bLnfIXLu7DxA4U"/>
+        <!-- Impeller's Android platform-view path (Texture Layer Hybrid Composition)
+             renders the Google Maps/Navigation SDK native view blank on several
+             OEM skins, notably MIUI (flutter/flutter#164183, still open upstream).
+             Falling back to the Skia renderer keeps the map visible on those devices. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

@@ -15,6 +15,7 @@ class SocketClient {
 
   void connect(String accessToken) {
     disconnect();
+    print('=== [SocketClient] Connecting to ${ApiConfig.socketBaseUrl}... ===');
     _socket = io.io(
       ApiConfig.socketBaseUrl,
       io.OptionBuilder()
@@ -23,6 +24,10 @@ class SocketClient {
           .enableAutoConnect()
           .build(),
     );
+    _socket?.onConnect((_) => print('=== [SocketClient] CONNECTED ==='));
+    _socket?.onConnectError((err) => print('=== [SocketClient] CONNECT ERROR: $err ==='));
+    _socket?.onError((err) => print('=== [SocketClient] ERROR: $err ==='));
+    _socket?.onDisconnect((_) => print('=== [SocketClient] DISCONNECTED ==='));
   }
 
   io.Socket? get socket => _socket;

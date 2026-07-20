@@ -34,6 +34,7 @@ class ApiPaths {
   static const meWithdrawals = '/partners/me/withdrawals';
   static const meRatings = '/partners/me/ratings';
   static const bookings = '/bookings';
+  static const initiatePayment = '/payments/initiate';
   static const tickets = '/tickets';
   static const notifications = '/notifications';
 }
