@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'package:google_navigation_flutter/google_navigation_flutter.dart';
+
 import 'package:partner/core/push_notifications.dart';
 import 'package:partner/features/notifications/presentation/notifications_screen.dart';
 import 'package:partner/features/onboarding/presentation/login_screen.dart';
@@ -41,16 +41,6 @@ void main() async {
   );
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-
-  try {
-    if (!await GoogleMapsNavigator.isInitialized()) {
-      await GoogleMapsNavigator.initializeNavigationSession(
-        taskRemovedBehavior: TaskRemovedBehavior.continueService,
-      ).catchError((_) => null);
-    }
-  } catch (e) {
-    debugPrint('[MAIN] Nav session init error: $e');
-  }
 
   AppStore.instance.init(); // Run initialization in parallel (non-blocking)
   runApp(const ShiprydPartnerApp());

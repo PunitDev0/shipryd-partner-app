@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:google_navigation_flutter/google_navigation_flutter.dart' show LatLng;
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:geolocator/geolocator.dart';
 import 'package:partner/features/orders/presentation/booking_chat_screen.dart';
 import 'package:partner/features/orders/presentation/navigation_screen.dart';
@@ -107,7 +107,7 @@ class _DropTrackingScreenState extends State<DropTrackingScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => NavigationScreen(
-          destination: LatLng(latitude: order.dropLat, longitude: order.dropLng),
+          destination: LatLng(order.dropLat, order.dropLng),
           destinationTitle: 'Drop-off',
           orderId: order.id,
           peerName: order.fromName,

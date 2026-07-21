@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
-import 'package:google_navigation_flutter/google_navigation_flutter.dart' show LatLng;
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:partner/core/map_pins.dart';
 import 'package:partner/features/orders/presentation/booking_chat_screen.dart';
 import 'package:partner/features/orders/presentation/drop_tracking_screen.dart';
 import 'package:partner/features/orders/presentation/navigation_screen.dart';
@@ -31,7 +32,7 @@ class PickupTrackingScreen extends StatefulWidget {
 class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
   gmaps.GoogleMapController? _mapController;
 
-  LatLng _driverLoc = const LatLng(latitude: 28.6180, longitude: 77.3620);
+  LatLng _driverLoc = const LatLng(28.6180, 77.3620);
   bool _driverLocInitialized = false;
   bool _locationDenied = false;
   bool _boundsFitted = false;
@@ -108,7 +109,7 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
   void _applyPosition(Position position) {
     if (!mounted) return;
     setState(() {
-      _driverLoc = LatLng(latitude: position.latitude, longitude: position.longitude);
+      _driverLoc = LatLng(position.latitude, position.longitude);
       _driverLocInitialized = true;
       _locationDenied = false;
     });
@@ -127,7 +128,7 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       _markers.add(gmaps.Marker(
         markerId: const gmaps.MarkerId('driver'),
         position: gmaps.LatLng(_driverLoc.latitude, _driverLoc.longitude),
-        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueYellow),
+        icon: MapPins.driver ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueYellow),
         anchor: const Offset(0.5, 0.5),
         flat: true,
         zIndexInt: 2,
@@ -143,7 +144,7 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       _markers.add(gmaps.Marker(
         markerId: const gmaps.MarkerId('pickup'),
         position: gmaps.LatLng(target.latitude, target.longitude),
-        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueGreen),
+        icon: MapPins.pickup ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueGreen),
         anchor: const Offset(0.5, 1.0),
         zIndexInt: 1,
       ));
@@ -230,6 +231,9 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       target.latitude, target.longitude,
     );
     if (mounted) setState(() => _routeDistanceMeters = fallback);
+    // Routes API failed — still draw a straight preview line so the driver
+    // always sees a route between their position and the pickup pin.
+    _drawPolyline([_driverLoc, target]);
   }
 
   List<gmaps.LatLng> _decodePolyline(String encoded) {
@@ -287,7 +291,7 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => NavigationScreen(
-          destination: LatLng(latitude: order.pickupLat, longitude: order.pickupLng),
+          destination: LatLng(order.pickupLat, order.pickupLng),
           destinationTitle: 'Pickup',
           orderId: order.id,
           peerName: order.fromName,
@@ -327,7 +331,7 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => NavigationScreen(
-          destination: LatLng(latitude: order.dropLat, longitude: order.dropLng),
+          destination: LatLng(order.dropLat, order.dropLng),
           destinationTitle: 'Drop-off',
           orderId: order.id,
           peerName: recipientName,
@@ -484,8 +488,8 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
 
           final parcel = order is ParcelOrder ? order : null;
           final targetLoc = isPickedUp
-              ? LatLng(latitude: order.dropLat, longitude: order.dropLng)
-              : LatLng(latitude: order.pickupLat, longitude: order.pickupLng);
+              ? LatLng(order.dropLat, order.dropLng)
+              : LatLng(order.pickupLat, order.pickupLng);
 
           final double? liveDistanceMeters = _routeDistanceMeters ??
               (_driverLocInitialized
@@ -507,9 +511,12 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
               Positioned.fill(
                 child: gmaps.GoogleMap(
                   key: const ValueKey('pickup_map_preview'),
-                  onMapCreated: (controller) {
+                  onMapCreated: (controller) async {
                     _mapController = controller;
                     _lastPickupTarget = targetLoc;
+                    final dpr = MediaQuery.of(context).devicePixelRatio;
+                    await MapPins.preload(dpr);
+                    if (!mounted) return;
                     _updateDriverMarker();
                     _addPickupMarker(targetLoc);
                     WidgetsBinding.instance.addPostFrameCallback((_) {

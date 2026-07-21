@@ -2,15 +2,15 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:google_navigation_flutter/google_navigation_flutter.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 /// Custom map markers for the pickup/drop preview maps — a direction-aware
 /// moped badge for the partner's own position, plus teardrop pins for
 /// pickup/drop — replacing the SDK's default markers so the map reads as
 /// part of the app's own design system.
 ///
-/// Drawn with `dart:ui` Canvas (no image assets needed), then registered
-/// with the Navigation SDK's image registry via [registerBitmapImage].
+/// Drawn with `dart:ui` Canvas (no image assets needed), then converted to
+/// [BitmapDescriptor] for use with [google_maps_flutter].
 class MapPins {
   MapPins._();
 
@@ -18,13 +18,13 @@ class MapPins {
   static const dropColor = Color(0xFFE53935);
   static const driverColor = Color(0xFFF2C230); // AppColors.primary
 
-  static ImageDescriptor? _pickup;
-  static ImageDescriptor? _drop;
-  static ImageDescriptor? _driver;
+  static BitmapDescriptor? _pickup;
+  static BitmapDescriptor? _drop;
+  static BitmapDescriptor? _driver;
 
-  static ImageDescriptor? get pickup => _pickup;
-  static ImageDescriptor? get drop => _drop;
-  static ImageDescriptor? get driver => _driver;
+  static BitmapDescriptor? get pickup => _pickup;
+  static BitmapDescriptor? get drop => _drop;
+  static BitmapDescriptor? get driver => _driver;
 
   static Uint8List? pickupPngBytes;
   static Uint8List? driverPngBytes;
@@ -53,7 +53,7 @@ class MapPins {
   /// A rounded teardrop — matches the classic map-pin silhouette. Marker
   /// anchor should be (0.5, 1.0) so the point lands exactly on the
   /// coordinate.
-  static Future<ImageDescriptor> _renderPin({
+  static Future<BitmapDescriptor> _renderPin({
     required Color color,
     required double devicePixelRatio,
   }) async {
@@ -91,15 +91,11 @@ class MapPins {
     final pngBytes = bytes?.buffer.asUint8List();
     if (color == pickupColor) pickupPngBytes = pngBytes;
     if (color == dropColor) dropPngBytes = pngBytes;
-    try {
-      if (bytes != null) {
-        return await registerBitmapImage(bitmap: bytes, imagePixelRatio: devicePixelRatio);
-      }
-      return ImageDescriptor.defaultImage;
-    } catch (e) {
-      debugPrint('[MapPins] registerBitmapImage error: $e');
-      return ImageDescriptor.defaultImage;
+
+    if (pngBytes != null) {
+      return BitmapDescriptor.bytes(pngBytes, imagePixelRatio: devicePixelRatio);
     }
+    return BitmapDescriptor.defaultMarker;
   }
 
   static Path _teardropPath(double w, double h) {
@@ -116,10 +112,10 @@ class MapPins {
   static const _driverBadgeSize = 46.0;
 
   /// A yellow circular badge with a moped glyph — rotatable via
-  /// `MarkerOptions.rotation` (unlike a teardrop pin, a circle keeps
+  /// [Marker.rotation] (unlike a teardrop pin, a circle keeps
   /// looking right when spun to face the direction of travel). Anchor
   /// should be (0.5, 0.5).
-  static Future<ImageDescriptor> _renderDriverBadge(double devicePixelRatio) async {
+  static Future<BitmapDescriptor> _renderDriverBadge(double devicePixelRatio) async {
     final size = _driverBadgeSize * devicePixelRatio;
 
     final recorder = ui.PictureRecorder();
@@ -165,14 +161,10 @@ class MapPins {
     final image = await picture.toImage(size.round(), size.round());
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     driverPngBytes = bytes?.buffer.asUint8List();
-    try {
-      if (bytes != null) {
-        return await registerBitmapImage(bitmap: bytes, imagePixelRatio: devicePixelRatio);
-      }
-      return ImageDescriptor.defaultImage;
-    } catch (e) {
-      debugPrint('[MapPins] registerBitmapImage error: $e');
-      return ImageDescriptor.defaultImage;
+
+    if (driverPngBytes != null) {
+      return BitmapDescriptor.bytes(driverPngBytes!, imagePixelRatio: devicePixelRatio);
     }
+    return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow);
   }
 }

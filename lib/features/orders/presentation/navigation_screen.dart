@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:google_navigation_flutter/google_navigation_flutter.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:partner/core/map_pins.dart';
 import 'package:partner/features/orders/presentation/booking_chat_screen.dart';
@@ -24,7 +24,8 @@ class _ManeuverStep {
   });
 }
 
-/// Full-screen dedicated turn-by-turn navigation screen (Rapido / Google Maps style).
+/// Full-screen dedicated turn-by-turn navigation screen using google_maps_flutter
+/// + Google Routes API. Rapido-style maneuver banner + ETA card overlay.
 class NavigationScreen extends StatefulWidget {
   final LatLng destination;
   final String destinationTitle; // 'Pickup' or 'Drop-off'
@@ -44,101 +45,89 @@ class NavigationScreen extends StatefulWidget {
 }
 
 class _NavigationScreenState extends State<NavigationScreen> {
-  GoogleNavigationViewController? _controller;
+  GoogleMapController? _controller;
 
-  bool _sessionReady = false;
-  bool _guidanceStarted = false;
+  bool _mapReady = false;
   bool _arrived = false;
-  LatLng _driverLoc = const LatLng(latitude: 28.6180, longitude: 77.3620);
+  LatLng _driverLoc = const LatLng(28.6180, 77.3620);
   bool _driverLocInitialized = false;
 
   double? _routeDistanceMeters;
   int? _routeDurationSeconds;
-  Polyline? _bluePolyline;
-  Marker? _driverMarker;
-  Marker? _destinationMarker;
+  final Set<Polyline> _polylines = {};
+  final Set<Marker> _markers = {};
 
   List<_ManeuverStep> _steps = [];
   int _currentStepIndex = 0;
 
-  StreamSubscription<OnArrivalEvent>? _arrivalSub;
   StreamSubscription<Position>? _positionSub;
+  bool _routeFetched = false;
+
+  static const _apiKey = 'AIzaSyDEDoT1AQ6WHDZurqMT0bLnfIXLu7DxA4U';
 
   @override
   void initState() {
     super.initState();
-    _initSession();
+    _initLocation();
   }
 
   @override
   void dispose() {
-    _arrivalSub?.cancel();
     _positionSub?.cancel();
-    GoogleMapsNavigator.stopGuidance().catchError((_) => null);
-    GoogleMapsNavigator.clearDestinations().catchError((_) => null);
+    _controller?.dispose();
     super.dispose();
   }
 
-  Future<void> _initSession() async {
+  Future<void> _initLocation() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        await Geolocator.openLocationSettings();
-      }
+      if (!serviceEnabled) await Geolocator.openLocationSettings();
+
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
 
-      // Fast seed driver position
+      // Seed with last known for fast first paint
       final lastKnown = await Geolocator.getLastKnownPosition();
       if (lastKnown != null && mounted) {
-        _driverLoc = LatLng(latitude: lastKnown.latitude, longitude: lastKnown.longitude);
-        _driverLocInitialized = true;
+        setState(() {
+          _driverLoc = LatLng(lastKnown.latitude, lastKnown.longitude);
+          _driverLocInitialized = true;
+        });
       }
 
-      // Start position stream for live movement update
+      // Live stream
       _positionSub = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
           distanceFilter: 5,
         ),
       ).listen(_onLocationUpdate);
-
-      if (!await GoogleMapsNavigator.isInitialized()) {
-        await GoogleMapsNavigator.initializeNavigationSession(
-          taskRemovedBehavior: TaskRemovedBehavior.continueService,
-        ).catchError((_) => null);
-      }
-
-      _arrivalSub = GoogleMapsNavigator.setOnArrivalListener(_onArrival);
-
-      if (mounted) setState(() => _sessionReady = true);
     } catch (e) {
-      debugPrint('[NAV] Init session error: $e');
-      if (mounted) setState(() => _sessionReady = true);
+      debugPrint('[NAV] Location init error: $e');
     }
   }
 
   void _onLocationUpdate(Position pos) {
     if (!mounted) return;
     setState(() {
-      _driverLoc = LatLng(latitude: pos.latitude, longitude: pos.longitude);
+      _driverLoc = LatLng(pos.latitude, pos.longitude);
       _driverLocInitialized = true;
     });
-
-    _syncMarkersAndCamera();
+    _updateDriverMarker();
     _updateActiveStep();
+    _checkArrival();
+  }
 
-    // Check if driver reached destination (< 35 meters)
-    final distanceToDest = Geolocator.distanceBetween(
+  void _checkArrival() {
+    final dist = Geolocator.distanceBetween(
       _driverLoc.latitude,
       _driverLoc.longitude,
       widget.destination.latitude,
       widget.destination.longitude,
     );
-
-    if (distanceToDest < 35 && !_arrived) {
+    if (dist < 35 && !_arrived) {
       setState(() => _arrived = true);
     }
   }
@@ -164,57 +153,74 @@ class _NavigationScreenState extends State<NavigationScreen> {
     }
   }
 
-  Future<void> _startNavigation() async {
-    if (_guidanceStarted) return;
-    try {
-      // 1. Seed location to simulator if available
-      try {
-        await GoogleMapsNavigator.simulator.setUserLocation(_driverLoc);
-      } catch (_) {}
+  /// Called once the GoogleMap is ready. Preloads custom pins, adds markers,
+  /// fetches route, and starts camera follow.
+  Future<void> _onMapCreated(GoogleMapController controller) async {
+    _controller = controller;
 
-      // 2. Set native destinations
-      try {
-        final status = await GoogleMapsNavigator.setDestinations(
-          Destinations(
-            waypoints: [
-              NavigationWaypoint.withLatLngTarget(
-                title: widget.destinationTitle,
-                target: widget.destination,
-              ),
-            ],
-            displayOptions: NavigationDisplayOptions(showDestinationMarkers: true),
-          ),
-        );
-        debugPrint('[NAV] Native setDestinations status: $status');
-        await GoogleMapsNavigator.startGuidance();
-      } catch (e) {
-        debugPrint('[NAV] Native guidance error: $e');
-      }
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    await MapPins.preload(dpr);
 
-      // 3. Enable Native UI controls & Camera Following (Tilted Perspective)
-      await _controller?.setNavigationUIEnabled(true);
-      await _controller?.setNavigationHeaderEnabled(true);
-      await _controller?.setNavigationFooterEnabled(true);
-      await _controller?.setRecenterButtonEnabled(true);
-      await _controller?.followMyLocation(CameraPerspective.tilted);
+    _addDestinationMarker();
+    _updateDriverMarker();
 
-      // 4. Fetch real road polyline & step maneuvers from Routes API
-      await _fetchAndDrawRoadRoute();
-
-      // 5. Start simulator movement if testing
-      try {
-        await GoogleMapsNavigator.simulator.simulateLocationsAlongExistingRoute();
-      } catch (_) {}
-    } catch (e) {
-      debugPrint('[NAV] Start navigation error: $e');
-    } finally {
-      if (mounted) setState(() => _guidanceStarted = true);
+    if (_driverLocInitialized) {
+      _animateCameraToDriver();
     }
+
+    if (!_routeFetched) {
+      _routeFetched = true;
+      await _fetchAndDrawRoadRoute();
+    }
+
+    if (mounted) setState(() => _mapReady = true);
+  }
+
+  void _addDestinationMarker() {
+    final icon = MapPins.pickup ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
+    setState(() {
+      _markers.removeWhere((m) => m.markerId.value == 'destination');
+      _markers.add(Marker(
+        markerId: const MarkerId('destination'),
+        position: widget.destination,
+        icon: icon,
+        anchor: const Offset(0.5, 1.0),
+        zIndexInt: 4,
+      ));
+    });
+  }
+
+  void _updateDriverMarker() {
+    if (!mounted) return;
+    final icon = MapPins.driver ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow);
+    setState(() {
+      _markers.removeWhere((m) => m.markerId.value == 'driver');
+      _markers.add(Marker(
+        markerId: const MarkerId('driver'),
+        position: _driverLoc,
+        icon: icon,
+        anchor: const Offset(0.5, 0.5),
+        flat: true,
+        zIndexInt: 5,
+      ));
+    });
+    _animateCameraToDriver();
+  }
+
+  void _animateCameraToDriver() {
+    _controller?.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: _driverLoc, zoom: 17, tilt: 45),
+      ),
+    );
+  }
+
+  void _recenterCamera() {
+    _animateCameraToDriver();
   }
 
   Future<void> _fetchAndDrawRoadRoute() async {
     try {
-      const apiKey = 'AIzaSyDEDoT1AQ6WHDZurqMT0bLnfIXLu7DxA4U';
       final uri = Uri.parse('https://routes.googleapis.com/directions/v2:computeRoutes');
       final body = jsonEncode({
         'origin': {
@@ -237,13 +243,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
         uri,
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': apiKey,
+          'X-Goog-Api-Key': _apiKey,
           'X-Goog-LanguageCode': 'en-US',
           'X-Goog-FieldMask':
               'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline,routes.legs.steps.navigationInstruction,routes.legs.steps.distanceMeters,routes.legs.steps.startLocation,routes.legs.steps.endLocation',
         },
         body: body,
-      ).timeout(const Duration(seconds: 6));
+      ).timeout(const Duration(seconds: 8));
 
       if (!mounted) return;
 
@@ -273,7 +279,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 if (rawInstruction.contains('\n')) {
                   rawInstruction = rawInstruction.split('\n').first;
                 }
-
                 final sDist = (s['distanceMeters'] as num?)?.toDouble() ?? 0.0;
                 final startLat = (s['startLocation']?['latLng']?['latitude'] as num?)?.toDouble() ?? 0.0;
                 final startLng = (s['startLocation']?['latLng']?['longitude'] as num?)?.toDouble() ?? 0.0;
@@ -284,66 +289,62 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   maneuver: maneuver,
                   instruction: rawInstruction.isNotEmpty ? rawInstruction : 'Head toward ${widget.destinationTitle}',
                   distanceMeters: sDist,
-                  startLoc: LatLng(latitude: startLat, longitude: startLng),
-                  endLoc: LatLng(latitude: endLat, longitude: endLng),
+                  startLoc: LatLng(startLat, startLng),
+                  endLoc: LatLng(endLat, endLng),
                 ));
               }
             }
           }
 
-          setState(() {
-            if (dist != null) _routeDistanceMeters = dist;
-            if (durSec > 0) _routeDurationSeconds = durSec;
-            _steps = stepsList;
-            _currentStepIndex = 0;
-          });
+          if (mounted) {
+            setState(() {
+              if (dist != null) _routeDistanceMeters = dist;
+              if (durSec > 0) _routeDurationSeconds = durSec;
+              _steps = stepsList;
+              _currentStepIndex = 0;
+            });
+          }
 
-          if (encoded != null) await _drawBlueRoadPolyline(_decodePolyline(encoded));
+          if (encoded != null) _drawPolyline(_decodePolyline(encoded));
         }
       } else {
-        _drawFallbackDirectPolyline();
+        _drawFallbackPolyline();
       }
     } catch (e) {
-      debugPrint('[NAV] Routes API fetch error: $e');
-      _drawFallbackDirectPolyline();
+      debugPrint('[NAV] Routes API error: $e');
+      _drawFallbackPolyline();
     }
   }
 
-  void _drawFallbackDirectPolyline() {
+  void _drawFallbackPolyline() {
     final dist = Geolocator.distanceBetween(
       _driverLoc.latitude,
       _driverLoc.longitude,
       widget.destination.latitude,
       widget.destination.longitude,
     );
-    setState(() {
-      _routeDistanceMeters = dist;
-      _routeDurationSeconds = (dist / 1000 / 25 * 3600).round();
-    });
-    _drawBlueRoadPolyline([_driverLoc, widget.destination]);
+    if (mounted) {
+      setState(() {
+        _routeDistanceMeters = dist;
+        _routeDurationSeconds = (dist / 1000 / 25 * 3600).round();
+      });
+    }
+    _drawPolyline([_driverLoc, widget.destination]);
   }
 
-  Future<void> _drawBlueRoadPolyline(List<LatLng> points) async {
-    final controller = _controller;
-    if (controller == null || points.isEmpty) return;
-    try {
-      if (_bluePolyline != null) {
-        await controller.removePolylines([_bluePolyline!]);
-        _bluePolyline = null;
-      }
-      final added = await controller.addPolylines([
-        PolylineOptions(
+  void _drawPolyline(List<LatLng> points) {
+    if (!mounted || points.isEmpty) return;
+    setState(() {
+      _polylines
+        ..removeWhere((p) => p.polylineId.value == 'route')
+        ..add(Polyline(
+          polylineId: const PolylineId('route'),
           points: points,
-          strokeWidth: 8.0,
-          strokeColor: const Color(0xFF0066FF),
-          zIndex: 10,
+          color: const Color(0xFF0066FF),
+          width: 6,
           geodesic: true,
-        ),
-      ]);
-      if (added.isNotEmpty) _bluePolyline = added.first;
-    } catch (e) {
-      debugPrint('[NAV] Blue polyline draw failed: $e');
-    }
+        ));
+    });
   }
 
   List<LatLng> _decodePolyline(String encoded) {
@@ -368,75 +369,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
       } while (b >= 0x20);
       final dlng = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
       lng += dlng;
-      points.add(LatLng(latitude: lat / 1e5, longitude: lng / 1e5));
+      points.add(LatLng(lat / 1e5, lng / 1e5));
     }
     return points;
   }
 
-  Future<void> _syncMarkersAndCamera() async {
-    final controller = _controller;
-    if (controller == null || !_driverLocInitialized) return;
-
-    try {
-      final driverIcon = MapPins.driver;
-      if (driverIcon != null) {
-        final options = MarkerOptions(
-          position: _driverLoc,
-          icon: driverIcon,
-          anchor: const MarkerAnchor(u: 0.5, v: 0.5),
-          flat: true,
-          zIndex: 5.0,
-        );
-        if (_driverMarker == null) {
-          final added = await controller.addMarkers([options]);
-          if (added.isNotEmpty) _driverMarker = added.first;
-        } else {
-          final updated = await controller.updateMarkers([_driverMarker!.copyWith(options: options)]);
-          if (updated.isNotEmpty) _driverMarker = updated.first;
-        }
-      }
-
-      final pickupIcon = MapPins.pickup;
-      if (pickupIcon != null && _destinationMarker == null) {
-        final added = await controller.addMarkers([
-          MarkerOptions(
-            position: widget.destination,
-            icon: pickupIcon,
-            anchor: const MarkerAnchor(u: 0.5, v: 1.0),
-            zIndex: 4.0,
-          ),
-        ]);
-        if (added.isNotEmpty) _destinationMarker = added.first;
-      }
-    } catch (e) {
-      debugPrint('[NAV] Sync markers error: $e');
-    }
-  }
-
-  void _recenterCamera() {
-    _controller?.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(
-          target: _driverLoc,
-          zoom: 17,
-        ),
-      ),
-    );
-    _controller?.followMyLocation(CameraPerspective.tilted);
-  }
-
-  void _onArrival(OnArrivalEvent event) {
-    if (!mounted) return;
-    setState(() => _arrived = true);
-  }
-
-  Future<void> _exitNavigation({required bool reached}) async {
-    try {
-      await GoogleMapsNavigator.stopGuidance();
-      await _controller?.setNavigationUIEnabled(false);
-      await GoogleMapsNavigator.clearDestinations();
-    } catch (_) {}
-    if (mounted) Navigator.pop(context, reached);
+  void _exitNavigation({required bool reached}) {
+    Navigator.pop(context, reached);
   }
 
   IconData _getManeuverIcon(String maneuver) {
@@ -485,18 +424,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
     const kCardBg = Color(0xFF161A22);
     const kCyan = Color(0xFF22D3EE);
 
-    if (!_sessionReady) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF090A0F),
-        body: Center(child: CircularProgressIndicator(color: kCyan)),
-      );
-    }
-
     final durationMin = ((_routeDurationSeconds ?? 120) / 60).ceil();
     final etaTimeStr = _formatEtaTime(_routeDurationSeconds);
     final distStr = _formatDistanceStr(_routeDistanceMeters);
 
-    // Active maneuver & Next maneuver data
     _ManeuverStep? activeStep = _steps.isNotEmpty && _currentStepIndex < _steps.length ? _steps[_currentStepIndex] : null;
     _ManeuverStep? nextStep = _steps.isNotEmpty && (_currentStepIndex + 1) < _steps.length ? _steps[_currentStepIndex + 1] : null;
 
@@ -520,113 +451,127 @@ class _NavigationScreenState extends State<NavigationScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // ── 1. Full-screen Interactive Navigation View ───────────────
+          // ── 1. Full-screen Google Map ─────────────────────────────────
           Positioned.fill(
-            child: GoogleMapsNavigationView(
+            child: GoogleMap(
               key: const ValueKey('navigation_map_view'),
-              onViewCreated: (controller) {
-                _controller = controller;
-                _startNavigation();
-              },
+              onMapCreated: _onMapCreated,
               initialCameraPosition: CameraPosition(
-                target: widget.destination,
+                target: _driverLocInitialized ? _driverLoc : widget.destination,
                 zoom: 16,
+                tilt: 45,
               ),
-              initialNavigationUIEnabledPreference: NavigationUIEnabledPreference.automatic,
-              initialZoomControlsEnabled: false,
-              initialCompassEnabled: false,
-              initialMapColorScheme: MapColorScheme.light,
+              markers: _markers,
+              polylines: _polylines,
+              myLocationEnabled: false,
+              myLocationButtonEnabled: false,
+              zoomControlsEnabled: false,
+              compassEnabled: false,
+              mapToolbarEnabled: false,
+              trafficEnabled: true,
+              buildingsEnabled: true,
+              mapType: MapType.normal,
             ),
           ),
 
-          // ── 2. Top Turn-by-Turn Green Maneuver Banner (Rapido UI + Real Steps) ──
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 8,
-            left: 14,
-            right: 14,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF046A38), // Rapido dark green banner
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: const [
-                  BoxShadow(color: Colors.black45, blurRadius: 12, offset: Offset(0, 4)),
-                ],
+          // Loading indicator while map initializes
+          if (!_mapReady)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0xFF090A0F),
+                child: Center(child: CircularProgressIndicator(color: kCyan)),
               ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.18),
-                      shape: BoxShape.circle,
+            ),
+
+          // ── 2. Top Turn-by-Turn Green Maneuver Banner ─────────────────
+          if (_mapReady && !_arrived)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 14,
+              right: 14,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF046A38),
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black45, blurRadius: 12, offset: Offset(0, 4)),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(turnIcon, color: Colors.white, size: 28),
                     ),
-                    child: Icon(turnIcon, color: Colors.white, size: 28),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'In $turnDistStr',
-                          style: GoogleFonts.outfit(
-                            color: Colors.white70,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'In $turnDistStr',
+                            style: GoogleFonts.outfit(
+                              color: Colors.white70,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 1),
-                        Text(
-                          turnInstruction,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.outfit(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            height: 1.2,
+                          const SizedBox(height: 1),
+                          Text(
+                            turnInstruction,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.outfit(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              height: 1.2,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF004429),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Then',
-                                style: GoogleFonts.outfit(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(width: 4),
-                              Icon(nextTurnIcon, color: Colors.white, size: 14),
-                              const SizedBox(width: 4),
-                              Flexible(
-                                child: Text(
-                                  nextTurnInstruction,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: GoogleFonts.outfit(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF004429),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Then',
+                                  style: GoogleFonts.outfit(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Icon(nextTurnIcon, color: Colors.white, size: 14),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    nextTurnInstruction,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
 
-          // ── 3. Floating Re-center Button (Bottom-Left) ───────────────
-          if (!_arrived)
+          // ── 3. Floating Re-center Button ──────────────────────────────
+          if (_mapReady && !_arrived)
             Positioned(
               left: 16,
               bottom: 110,
@@ -660,8 +605,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
             ),
 
-          // ── 4. Bottom Rapido-Style ETA Card ──────────────────────────
-          if (!_arrived)
+          // ── 4. Bottom ETA Card ────────────────────────────────────────
+          if (_mapReady && !_arrived)
             Positioned(
               bottom: 16,
               left: 14,
@@ -742,7 +687,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
             ),
 
-          // ── 5. Reached Arrival Popup ──────────────────────────────────
+          // ── 5. Arrived Popup ──────────────────────────────────────────
           if (_arrived)
             Positioned(
               bottom: 24,
