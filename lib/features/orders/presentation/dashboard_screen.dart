@@ -13,10 +13,25 @@ import 'package:partner/shared/state/order_store.dart';
 import 'package:partner/shared/theme/app_colors.dart';
 import 'package:partner/shared/utils/formatters.dart';
 import 'package:partner/shared/widgets/order_card.dart';
+import 'package:partner/shared/widgets/permission_onboarding_sheet.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   static const route = '/dashboard';
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Show permission onboarding sheet on first launch after login
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) PermissionOnboardingSheet.showIfNeeded(context);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

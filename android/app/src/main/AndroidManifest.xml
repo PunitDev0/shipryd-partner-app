@@ -1,8 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.CAMERA"/>
-    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Location: Required for GPS tracking, navigation, and showing on customer's map -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <!-- Camera: Required for scanning parcel QR codes -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Internet: Required for order sync, maps, and real-time updates -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Notifications: Required for incoming order alerts (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Phone state: Required for detecting calls during navigation -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     <application

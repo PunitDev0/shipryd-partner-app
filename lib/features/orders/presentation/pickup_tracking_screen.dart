@@ -1,11 +1,11 @@
 import 'dart:convert';
-import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:google_navigation_flutter/google_navigation_flutter.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
+import 'package:google_navigation_flutter/google_navigation_flutter.dart' show LatLng;
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:partner/core/map_pins.dart';
 import 'package:partner/features/orders/presentation/booking_chat_screen.dart';
 import 'package:partner/features/orders/presentation/drop_tracking_screen.dart';
 import 'package:partner/features/orders/presentation/navigation_screen.dart';
@@ -29,20 +29,19 @@ class PickupTrackingScreen extends StatefulWidget {
 }
 
 class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
-  GoogleMapViewController? _mapController;
+  gmaps.GoogleMapController? _mapController;
 
   LatLng _driverLoc = const LatLng(latitude: 28.6180, longitude: 77.3620);
   bool _driverLocInitialized = false;
   bool _locationDenied = false;
   bool _boundsFitted = false;
 
-  Marker? _driverMarker;
-  Marker? _pickupMarker;
+  // Markers and polylines for google_maps_flutter
+  final Set<gmaps.Marker> _markers = {};
+  final Set<gmaps.Polyline> _polylines = {};
 
-  // Routes API — real road distance + dashed preview line.
+  // Routes API — real road distance.
   double? _routeDistanceMeters;
-  Polyline? _dashedPolyline;
-  Marker? _distanceLabelMarker;
   bool _fetchingRoute = false;
   bool _routeFetched = false;
 
@@ -56,26 +55,10 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
   @override
   void initState() {
     super.initState();
-    _initNavigationSession();
-    MapPins.preload(3.0).then((_) {
-      if (mounted) setState(() {});
-    });
     _seedInitialLocation();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       OrderStore.instance.refresh();
     });
-  }
-
-  Future<void> _initNavigationSession() async {
-    try {
-      if (!await GoogleMapsNavigator.isInitialized()) {
-        await GoogleMapsNavigator.initializeNavigationSession(
-          taskRemovedBehavior: TaskRemovedBehavior.continueService,
-        ).catchError((_) => null);
-      }
-    } catch (e) {
-      debugPrint('[MAP] Init nav session error: $e');
-    }
   }
 
   @override
@@ -129,75 +112,57 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       _driverLocInitialized = true;
       _locationDenied = false;
     });
-    _syncDriverMarker();
+    // Update driver marker in google_maps_flutter markers set
+    _updateDriverMarker();
     if (_mapController != null && _lastPickupTarget != null) {
       _fitMapToPickup(_lastPickupTarget!);
       _fetchRouteAndDraw(_lastPickupTarget!);
     }
   }
 
-  // ── Markers (custom pins) ────────────────────────────────────────────────
-  Future<void> _syncDriverMarker() async {
-    final controller = _mapController;
-    if (controller == null) return;
-    final icon = MapPins.driver ?? ImageDescriptor.defaultImage;
-    final options = MarkerOptions(
-      position: _driverLoc,
-      icon: icon,
-      anchor: const MarkerAnchor(u: 0.5, v: 0.5),
-      flat: true,
-      zIndex: 2.0,
-    );
-    try {
-      if (_driverMarker == null) {
-        final added = await controller.addMarkers([options]);
-        _driverMarker = added.isNotEmpty ? added.first : null;
-      } else {
-        final updated = await controller.updateMarkers([_driverMarker!.copyWith(options: options)]);
-        _driverMarker = updated.isNotEmpty ? updated.first : _driverMarker;
-      }
-    } catch (e) {
-      debugPrint('Driver marker sync failed: $e');
-    }
+  void _updateDriverMarker() {
+    if (!mounted) return;
+    setState(() {
+      _markers.removeWhere((m) => m.markerId.value == 'driver');
+      _markers.add(gmaps.Marker(
+        markerId: const gmaps.MarkerId('driver'),
+        position: gmaps.LatLng(_driverLoc.latitude, _driverLoc.longitude),
+        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueYellow),
+        anchor: const Offset(0.5, 0.5),
+        flat: true,
+        zIndexInt: 2,
+      ));
+    });
   }
 
-  Future<void> _syncPickupMarker(LatLng target) async {
-    final controller = _mapController;
-    if (controller == null) return;
-    final icon = MapPins.pickup ?? ImageDescriptor.defaultImage;
-    try {
-      if (_pickupMarker == null) {
-        final added = await controller.addMarkers([
-          MarkerOptions(position: target, icon: icon, anchor: const MarkerAnchor(u: 0.5, v: 1.0)),
-        ]);
-        if (added.isNotEmpty) _pickupMarker = added.first;
-      }
-    } catch (e) {
-      debugPrint('Pickup marker sync failed: $e');
-    }
+  void _addPickupMarker(LatLng target) {
+    if (!mounted) return;
+    final hasPickup = _markers.any((m) => m.markerId.value == 'pickup');
+    if (hasPickup) return;
+    setState(() {
+      _markers.add(gmaps.Marker(
+        markerId: const gmaps.MarkerId('pickup'),
+        position: gmaps.LatLng(target.latitude, target.longitude),
+        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueGreen),
+        anchor: const Offset(0.5, 1.0),
+        zIndexInt: 1,
+      ));
+    });
   }
 
   void _fitMapToPickup(LatLng target) {
     if (_mapController == null || !_driverLocInitialized || _boundsFitted) return;
     _boundsFitted = true;
-    final pts = [_driverLoc, target];
-    double minLat = pts[0].latitude, maxLat = pts[0].latitude;
-    double minLng = pts[0].longitude, maxLng = pts[0].longitude;
-    for (final p in pts) {
-      if (p.latitude < minLat) minLat = p.latitude;
-      if (p.latitude > maxLat) maxLat = p.latitude;
-      if (p.longitude < minLng) minLng = p.longitude;
-      if (p.longitude > maxLng) maxLng = p.longitude;
-    }
-    // Zoom out just enough with padding + top buffer so both pins and distance speech bubble fit
+    final sw = gmaps.LatLng(
+      (_driverLoc.latitude < target.latitude ? _driverLoc.latitude : target.latitude) - 0.0025,
+      (_driverLoc.longitude < target.longitude ? _driverLoc.longitude : target.longitude) - 0.0025,
+    );
+    final ne = gmaps.LatLng(
+      (_driverLoc.latitude > target.latitude ? _driverLoc.latitude : target.latitude) + 0.0035,
+      (_driverLoc.longitude > target.longitude ? _driverLoc.longitude : target.longitude) + 0.0025,
+    );
     _mapController?.animateCamera(
-      CameraUpdate.newLatLngBounds(
-        LatLngBounds(
-          southwest: LatLng(latitude: minLat - 0.0025, longitude: minLng - 0.0025),
-          northeast: LatLng(latitude: maxLat + 0.0035, longitude: maxLng + 0.0025),
-        ),
-        padding: 120,
-      ),
+      gmaps.CameraUpdate.newLatLngBounds(gmaps.LatLngBounds(southwest: sw, northeast: ne), 120),
     );
   }
 
@@ -245,8 +210,7 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
           final dist = (routes[0]['distanceMeters'] as num?)?.toDouble();
           final encoded = routes[0]['polyline']?['encodedPolyline'] as String?;
           if (dist != null) setState(() => _routeDistanceMeters = dist);
-          if (encoded != null) await _drawDashedPolyline(_decodePolyline(encoded));
-          await _drawDistanceLabel(target, dist);
+          if (encoded != null) _drawPolyline(_decodePolyline(encoded));
         }
       } else {
         await _fallbackStraightLineDistance(target);
@@ -265,12 +229,11 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       _driverLoc.latitude, _driverLoc.longitude,
       target.latitude, target.longitude,
     );
-    setState(() => _routeDistanceMeters = fallback);
-    await _drawDistanceLabel(target, fallback);
+    if (mounted) setState(() => _routeDistanceMeters = fallback);
   }
 
-  List<LatLng> _decodePolyline(String encoded) {
-    final points = <LatLng>[];
+  List<gmaps.LatLng> _decodePolyline(String encoded) {
+    final points = <gmaps.LatLng>[];
     int index = 0;
     int lat = 0, lng = 0;
     while (index < encoded.length) {
@@ -291,108 +254,27 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       } while (b >= 0x20);
       final dlng = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
       lng += dlng;
-      points.add(LatLng(latitude: lat / 1e5, longitude: lng / 1e5));
+      points.add(gmaps.LatLng(lat / 1e5, lng / 1e5));
     }
     return points;
   }
 
-  Future<void> _drawDashedPolyline(List<LatLng> points) async {
-    final controller = _mapController;
-    if (controller == null || points.isEmpty) return;
-    try {
-      if (_dashedPolyline != null) {
-        await controller.removePolylines([_dashedPolyline!]);
-        _dashedPolyline = null;
-      }
-      final added = await controller.addPolylines([
-        PolylineOptions(
-          points: points,
-          strokeWidth: 6.0,
-          strokeColor: const Color(0xFF34C759),
-          strokePattern: const <PatternItem>[DashPattern(length: 12), GapPattern(length: 10)],
-          zIndex: 1,
-          geodesic: true,
-        ),
-      ]);
-      if (added.isNotEmpty) _dashedPolyline = added.first;
-    } catch (e) {
-      debugPrint('Polyline draw failed: $e');
-    }
+  void _drawPolyline(List<gmaps.LatLng> points) {
+    if (!mounted || points.isEmpty) return;
+    setState(() {
+      _polylines.clear();
+      _polylines.add(gmaps.Polyline(
+        polylineId: const gmaps.PolylineId('route'),
+        points: points,
+        width: 5,
+        color: const Color(0xFF34C759),
+        patterns: [gmaps.PatternItem.dash(20), gmaps.PatternItem.gap(12)],
+        geodesic: true,
+        zIndex: 1,
+      ));
+    });
   }
 
-  Future<void> _drawDistanceLabel(LatLng target, double? meters) async {
-    final controller = _mapController;
-    if (controller == null || meters == null) return;
-    try {
-      if (_distanceLabelMarker != null) {
-        await controller.removeMarkers([_distanceLabelMarker!]);
-        _distanceLabelMarker = null;
-      }
-      final label = meters >= 1000 ? '${(meters / 1000).toStringAsFixed(1)} km away' : '${meters.round()} m away';
-      final labelIcon = await _createDistanceLabelIcon(label);
-      if (labelIcon == null || !mounted) return;
-      final labelLatLng = LatLng(latitude: target.latitude + 0.0016, longitude: target.longitude);
-      final added = await controller.addMarkers([
-        MarkerOptions(position: labelLatLng, icon: labelIcon, anchor: const MarkerAnchor(u: 0.5, v: 1.0), zIndex: 3.0),
-      ]);
-      if (added.isNotEmpty) _distanceLabelMarker = added.first;
-    } catch (e) {
-      debugPrint('Distance label draw failed: $e');
-    }
-  }
-
-  Future<ImageDescriptor?> _createDistanceLabelIcon(String text) async {
-    try {
-      const double w = 180, h = 54, tailHeight = 12;
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, w, h + tailHeight));
-
-      final bgPaint = Paint()
-        ..color = const Color(0xFF34C759)
-        ..style = PaintingStyle.fill;
-
-      // Rounded speech bubble pill
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(const Rect.fromLTWH(0, 0, w, h), const Radius.circular(27)),
-        bgPaint,
-      );
-
-      // Downward pointer
-      final tailPath = Path()
-        ..moveTo(w / 2 - 10, h - 2)
-        ..lineTo(w / 2 + 10, h - 2)
-        ..lineTo(w / 2, h + tailHeight)
-        ..close();
-      canvas.drawPath(tailPath, bgPaint);
-
-      final textPainter = TextPainter(
-        text: TextSpan(
-          text: text,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.2,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout(maxWidth: w - 20);
-      textPainter.paint(
-        canvas,
-        Offset((w - textPainter.width) / 2, (h - textPainter.height) / 2),
-      );
-
-      final picture = recorder.endRecording();
-      final image = await picture.toImage(w.toInt(), (h + tailHeight).toInt());
-      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (bytes == null) return null;
-      return registerBitmapImage(bitmap: bytes, imagePixelRatio: 3.0);
-    } catch (e) {
-      debugPrint('Label icon creation failed: $e');
-      return null;
-    }
-  }
 
   String _formatDistance(double? meters) {
     if (meters == null) return '—';
@@ -620,30 +502,38 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
 
           return Stack(
             children: [
-              // Main map preview — fixed static map (gestures disabled) so partner cannot move map.
+              // Main map preview — uses standard google_maps_flutter (NOT Navigation SDK)
+              // to avoid the Android blank-map issue caused by Navigation SDK requiring TOS acceptance.
               Positioned.fill(
-                child: GoogleMapsMapView(
+                child: gmaps.GoogleMap(
                   key: const ValueKey('pickup_map_preview'),
-                  onViewCreated: (controller) {
+                  onMapCreated: (controller) {
                     _mapController = controller;
                     _lastPickupTarget = targetLoc;
+                    _updateDriverMarker();
+                    _addPickupMarker(targetLoc);
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (!mounted) return;
-                      _syncDriverMarker();
-                      _syncPickupMarker(targetLoc);
                       _fitMapToPickup(targetLoc);
                       _fetchRouteAndDraw(targetLoc);
                     });
                   },
-                  initialCameraPosition: CameraPosition(target: targetLoc, zoom: 14),
-                  initialRotateGesturesEnabled: false,
-                  initialScrollGesturesEnabled: false,
-                  initialTiltGesturesEnabled: false,
-                  initialZoomGesturesEnabled: false,
-                  initialScrollGesturesEnabledDuringRotateOrZoom: false,
-                  initialZoomControlsEnabled: false,
-                  initialCompassEnabled: false,
-                  initialMapColorScheme: MapColorScheme.light,
+                  initialCameraPosition: gmaps.CameraPosition(
+                    target: gmaps.LatLng(targetLoc.latitude, targetLoc.longitude),
+                    zoom: 14,
+                  ),
+                  markers: _markers,
+                  polylines: _polylines,
+                  rotateGesturesEnabled: false,
+                  scrollGesturesEnabled: false,
+                  tiltGesturesEnabled: false,
+                  zoomGesturesEnabled: false,
+                  zoomControlsEnabled: false,
+                  compassEnabled: false,
+                  mapToolbarEnabled: false,
+                  myLocationButtonEnabled: false,
+                  myLocationEnabled: false,
+                  liteModeEnabled: false,
                 ),
               ),
 
