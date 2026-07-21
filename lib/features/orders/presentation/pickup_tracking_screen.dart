@@ -37,9 +37,10 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
   bool _locationDenied = false;
   bool _boundsFitted = false;
 
-  // Markers and polylines for google_maps_flutter
-  final Set<gmaps.Marker> _markers = {};
-  final Set<gmaps.Polyline> _polylines = {};
+  // Routed polyline points from the Routes API — null until the network
+  // fetch resolves, in which case markers/polyline builders below fall
+  // back to a straight line so the map is never empty.
+  List<gmaps.LatLng>? _routedPoints;
 
   // Routes API — real road distance.
   double? _routeDistanceMeters;
@@ -58,6 +59,12 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
     super.initState();
     _seedInitialLocation();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final dpr = View.of(context).devicePixelRatio;
+      // Markers are rebuilt fresh every frame from _buildMarkers(), so once
+      // the custom pins are ready a plain rebuild swaps them in.
+      MapPins.preload(dpr).then((_) {
+        if (mounted) setState(() {});
+      });
       OrderStore.instance.refresh();
     });
   }
@@ -113,42 +120,56 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       _driverLocInitialized = true;
       _locationDenied = false;
     });
-    // Update driver marker in google_maps_flutter markers set
-    _updateDriverMarker();
-    if (_mapController != null && _lastPickupTarget != null) {
+    if (_lastPickupTarget != null) {
       _fitMapToPickup(_lastPickupTarget!);
       _fetchRouteAndDraw(_lastPickupTarget!);
     }
   }
 
-  void _updateDriverMarker() {
-    if (!mounted) return;
-    setState(() {
-      _markers.removeWhere((m) => m.markerId.value == 'driver');
-      _markers.add(gmaps.Marker(
+  /// Pure builder — returns a fresh marker Set every call so driver/pickup
+  /// pins are present from the very first frame the map view is created
+  /// (never added late onto an already-live platform view, which is what
+  /// silently dropped them before).
+  Set<gmaps.Marker> _buildMarkers(LatLng target, {required bool isDrop}) {
+    return {
+      gmaps.Marker(
+        markerId: const gmaps.MarkerId('pickup'),
+        position: gmaps.LatLng(target.latitude, target.longitude),
+        icon: (isDrop ? MapPins.drop : MapPins.pickup) ??
+            gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                isDrop ? gmaps.BitmapDescriptor.hueRed : gmaps.BitmapDescriptor.hueGreen),
+        anchor: const Offset(0.5, 1.0),
+        zIndexInt: 4,
+      ),
+      gmaps.Marker(
         markerId: const gmaps.MarkerId('driver'),
         position: gmaps.LatLng(_driverLoc.latitude, _driverLoc.longitude),
         icon: MapPins.driver ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueYellow),
         anchor: const Offset(0.5, 0.5),
         flat: true,
-        zIndexInt: 2,
-      ));
-    });
+        zIndexInt: 5,
+      ),
+    };
   }
 
-  void _addPickupMarker(LatLng target) {
-    if (!mounted) return;
-    final hasPickup = _markers.any((m) => m.markerId.value == 'pickup');
-    if (hasPickup) return;
-    setState(() {
-      _markers.add(gmaps.Marker(
-        markerId: const gmaps.MarkerId('pickup'),
-        position: gmaps.LatLng(target.latitude, target.longitude),
-        icon: MapPins.pickup ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueGreen),
-        anchor: const Offset(0.5, 1.0),
-        zIndexInt: 1,
-      ));
-    });
+  /// Pure builder — always returns at least a straight fallback line so the
+  /// route is never blank while (or if) the Routes API call is pending/fails.
+  Set<gmaps.Polyline> _buildPolylines(LatLng target) {
+    final points = _routedPoints ??
+        [
+          gmaps.LatLng(_driverLoc.latitude, _driverLoc.longitude),
+          gmaps.LatLng(target.latitude, target.longitude),
+        ];
+    return {
+      gmaps.Polyline(
+        polylineId: const gmaps.PolylineId('route'),
+        points: points,
+        width: 6,
+        color: const Color(0xFF0066FF),
+        geodesic: true,
+        zIndex: 2,
+      ),
+    };
   }
 
   void _fitMapToPickup(LatLng target) {
@@ -163,11 +184,11 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       (_driverLoc.longitude > target.longitude ? _driverLoc.longitude : target.longitude) + 0.0025,
     );
     _mapController?.animateCamera(
-      gmaps.CameraUpdate.newLatLngBounds(gmaps.LatLngBounds(southwest: sw, northeast: ne), 120),
+      gmaps.CameraUpdate.newLatLngBounds(gmaps.LatLngBounds(southwest: sw, northeast: ne), 100),
     );
   }
 
-  // ── Routes API: real road distance + dashed preview line ────────────────
+  // ── Routes API: real road distance + solid preview line ────────────────
   Future<void> _fetchRouteAndDraw(LatLng target) async {
     if (!_driverLocInitialized || _fetchingRoute || _routeFetched) return;
     _fetchingRoute = true;
@@ -210,8 +231,12 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
         if (routes != null && routes.isNotEmpty) {
           final dist = (routes[0]['distanceMeters'] as num?)?.toDouble();
           final encoded = routes[0]['polyline']?['encodedPolyline'] as String?;
-          if (dist != null) setState(() => _routeDistanceMeters = dist);
-          if (encoded != null) _drawPolyline(_decodePolyline(encoded));
+          if (mounted) {
+            setState(() {
+              if (dist != null) _routeDistanceMeters = dist;
+              if (encoded != null) _routedPoints = _decodePolyline(encoded);
+            });
+          }
         }
       } else {
         await _fallbackStraightLineDistance(target);
@@ -231,9 +256,6 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
       target.latitude, target.longitude,
     );
     if (mounted) setState(() => _routeDistanceMeters = fallback);
-    // Routes API failed — still draw a straight preview line so the driver
-    // always sees a route between their position and the pickup pin.
-    _drawPolyline([_driverLoc, target]);
   }
 
   List<gmaps.LatLng> _decodePolyline(String encoded) {
@@ -262,23 +284,6 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
     }
     return points;
   }
-
-  void _drawPolyline(List<gmaps.LatLng> points) {
-    if (!mounted || points.isEmpty) return;
-    setState(() {
-      _polylines.clear();
-      _polylines.add(gmaps.Polyline(
-        polylineId: const gmaps.PolylineId('route'),
-        points: points,
-        width: 5,
-        color: const Color(0xFF34C759),
-        patterns: [gmaps.PatternItem.dash(20), gmaps.PatternItem.gap(12)],
-        geodesic: true,
-        zIndex: 1,
-      ));
-    });
-  }
-
 
   String _formatDistance(double? meters) {
     if (meters == null) return '—';
@@ -511,14 +516,9 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
               Positioned.fill(
                 child: gmaps.GoogleMap(
                   key: const ValueKey('pickup_map_preview'),
-                  onMapCreated: (controller) async {
+                  onMapCreated: (controller) {
                     _mapController = controller;
                     _lastPickupTarget = targetLoc;
-                    final dpr = MediaQuery.of(context).devicePixelRatio;
-                    await MapPins.preload(dpr);
-                    if (!mounted) return;
-                    _updateDriverMarker();
-                    _addPickupMarker(targetLoc);
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (!mounted) return;
                       _fitMapToPickup(targetLoc);
@@ -529,8 +529,8 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
                     target: gmaps.LatLng(targetLoc.latitude, targetLoc.longitude),
                     zoom: 14,
                   ),
-                  markers: _markers,
-                  polylines: _polylines,
+                  markers: _buildMarkers(targetLoc, isDrop: isPickedUp),
+                  polylines: _buildPolylines(targetLoc),
                   rotateGesturesEnabled: false,
                   scrollGesturesEnabled: false,
                   tiltGesturesEnabled: false,
