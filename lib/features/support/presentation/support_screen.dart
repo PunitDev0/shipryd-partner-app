@@ -12,7 +12,7 @@ class SupportScreen extends StatelessWidget {
   static const route = '/support';
   const SupportScreen({super.key});
 
-  static const _supportPhone = '+91 98765 43210';
+  static const _supportPhone = '+91 1800 123 4567';
 
   Future<void> _callSupport(BuildContext context) async {
     final uri = Uri(scheme: 'tel', path: _supportPhone.replaceAll(' ', ''));

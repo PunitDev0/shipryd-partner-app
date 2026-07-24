@@ -149,30 +149,44 @@ class AppStore extends ChangeNotifier {
     _touch();
   }
 
-  /// Re-fetches every server-owned collection in one go — called after
+  /// Re-fetches every server-owned collection in parallel — called after
   /// login/registration and whenever we need a full resync.
   Future<void> _refreshAll() async {
-    profile = await _authService.getMe();
-    documents = await _partnerService.getDocuments();
-    approvalStatus = await _partnerService.getApprovalStatus();
-    vehicle = await _partnerService.getVehicle();
-    final bank = await _partnerService.getBank();
+    final results = await Future.wait([
+      _authService.getMe(),
+      _partnerService.getDocuments(),
+      _partnerService.getApprovalStatus(),
+      _partnerService.getVehicle(),
+      _partnerService.getBank(),
+      OrderStore.instance.refresh().then((_) => null),
+      _refreshWallet(),
+      _refreshRatings(),
+      refreshNotifications(),
+      _ticketService.list(),
+    ]);
+
+    profile = results[0] as PartnerProfile;
+    documents = results[1] as List<DocumentItem>;
+    approvalStatus = results[2] as ApprovalStatus;
+    vehicle = results[3] as VehicleInfo?;
+    final bank = results[4] as BankAccount?;
     bankAccounts = bank != null ? [bank] : [];
     isRegistered = vehicle != null && bankAccounts.isNotEmpty && allDocumentsProvided;
-
-    await OrderStore.instance.refresh();
-    await _refreshWallet();
-    await _refreshRatings();
-    await refreshNotifications();
-    tickets = await _ticketService.list();
+    tickets = results[9] as List<SupportTicket>;
   }
 
   Future<void> _refreshWallet() async {
-    final wallet = await _walletService.getWallet();
+    final results = await Future.wait([
+      _walletService.getWallet(),
+      _walletService.getWithdrawals(),
+      _walletService.getTodayIncentives(),
+    ]);
+
+    final wallet = results[0] as WalletSnapshot;
     transactions = wallet.transactions;
     codSettlementDue = wallet.codSettlementDue;
-    withdrawals = await _walletService.getWithdrawals();
-    todayIncentives = await _walletService.getTodayIncentives();
+    withdrawals = results[1] as List<WithdrawalRequest>;
+    todayIncentives = results[2] as TodayIncentives?;
   }
 
   Future<void> _refreshRatings() async {
@@ -654,6 +668,11 @@ class AppStore extends ChangeNotifier {
     for (final n in notifications) {
       n.read = true;
     }
+    _touch();
+  }
+
+  void markNotificationRead(NotificationItem item) {
+    item.read = true;
     _touch();
   }
 

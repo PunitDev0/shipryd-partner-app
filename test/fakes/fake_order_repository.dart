@@ -47,4 +47,7 @@ class FakeOrderRepository implements OrderRepository {
       'qrString': 'upi://pay?pa=mock-merchant@okaxis&pn=ShipRyd&am=$amount&tr=$bookingId&cu=INR',
     };
   }
+
+  @override
+  Future<List<Map<String, dynamic>>> getDemandHeatmap() async => [];
 }

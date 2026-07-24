@@ -78,4 +78,15 @@ class OrderRepository {
       throw AppException.fromDio(e);
     }
   }
+
+  Future<List<Map<String, dynamic>>> getDemandHeatmap() async {
+    try {
+      final res = await _dio.get('${ApiPaths.bookings}/demand');
+      return List<Map<String, dynamic>>.from(
+        (res.data as List).map((e) => Map<String, dynamic>.from(e as Map)),
+      );
+    } on DioException catch (e) {
+      throw AppException.fromDio(e);
+    }
+  }
 }

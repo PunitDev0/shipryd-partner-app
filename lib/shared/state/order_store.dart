@@ -38,6 +38,7 @@ class OrderStore extends ChangeNotifier {
   }
 
   List<Order> orders = [];
+  List<Map<String, dynamic>> demandSectors = [];
 
   /// Offers currently awaiting an accept/decline decision, oldest first.
   /// [activeOffer] — the one shown in the overlay — is always the front of
@@ -52,7 +53,17 @@ class OrderStore extends ChangeNotifier {
 
   Future<void> refresh() async {
     orders = await _repo.getOrders();
+    await fetchDemandHeatmap();
     notifyListeners();
+  }
+
+  Future<void> fetchDemandHeatmap() async {
+    try {
+      demandSectors = await _repo.getDemandHeatmap();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to fetch demand heatmap: $e');
+    }
   }
 
   /// Public wrapper for [notifyListeners] — allows external callers (e.g., UI

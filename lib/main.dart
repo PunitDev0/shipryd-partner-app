@@ -61,7 +61,7 @@ class ShiprydPartnerApp extends StatelessWidget {
         final dark = store.darkMode;
         return MaterialApp(
           navigatorKey: navigatorKey,
-          title: 'SHIPRYD Partner',
+          title: 'ShipRyd Partner',
           debugShowCheckedModeBanner: false,
           theme: ThemeData(
             useMaterial3: true,
@@ -83,13 +83,11 @@ class ShiprydPartnerApp extends StatelessWidget {
               iconTheme: IconThemeData(color: AppColors.textPrimary),
             ),
           ),
-          home: !store.initialized
-              ? const InitializingScreen()
-              : !store.isLoggedIn
-                  ? const LoginScreen()
-                  : store.isRegistered
-                      ? const DashboardScreen()
-                      : const RegistrationPartnerTypeScreen(),
+          home: !store.isLoggedIn
+              ? const LoginScreen()
+              : store.isRegistered
+                  ? const DashboardScreen()
+                  : const RegistrationPartnerTypeScreen(),
           routes: {
             LoginScreen.route: (_) => const LoginScreen(),
             RegisterScreen.route: (_) => const RegisterScreen(),
@@ -97,7 +95,6 @@ class ShiprydPartnerApp extends StatelessWidget {
             RegistrationPartnerTypeScreen.route: (_) => const RegistrationPartnerTypeScreen(),
             DashboardScreen.route: (_) => const DashboardScreen(),
             IncomingParcelsScreen.route: (_) => const IncomingParcelsScreen(),
-            ScanParcelScreen.route: (_) => const ScanParcelScreen(),
             ParcelHistoryScreen.route: (_) => const ParcelHistoryScreen(),
             EarningsScreen.route: (_) => const EarningsScreen(),
             WalletScreen.route: (_) => const WalletScreen(),
@@ -126,46 +123,6 @@ class ShiprydPartnerApp extends StatelessWidget {
           },
         );
       },
-    );
-  }
-}
-
-class InitializingScreen extends StatelessWidget {
-  const InitializingScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              height: 80,
-              width: 80,
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.local_shipping_rounded,
-                color: AppColors.primary,
-                size: 40,
-              ),
-            ),
-            const SizedBox(height: 24),
-            const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: AppColors.primary,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

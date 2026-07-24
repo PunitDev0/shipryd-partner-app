@@ -362,12 +362,11 @@ class _PickupTrackingScreenState extends State<PickupTrackingScreen> {
         _showPerfectPickupPopup = true;
       });
     } catch (e) {
-      setState(() {
-        // Fallback optimistic mode for test/demo orders
-        _localPickedUp = true;
-        order.rawStatus = 'picked_up';
-        _showPerfectPickupPopup = true;
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to update pickup status: ${e.toString().replaceAll('Exception: ', '')}')),
+        );
+      }
     } finally {
       setState(() => _otpError2 = false);
     }
